@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/ghost-api
+      url: https://pypi.org/p/ghostapi
     permissions:
       id-token: write # PyPI trusted publishing; no API token stored in GitHub
     steps:

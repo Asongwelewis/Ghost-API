@@ -66,7 +66,8 @@ uv run ghostapi --help
 
 ## Branching, CI/CD
 - `main` = released code only. `dev` = integration branch. Work on `feat/*` / `fix/*` branches, PR into `dev`; release by PR `dev` → `main`, then tag `vX.Y.Z` on main (must equal `pyproject` version).
-- `.github/workflows/ci.yml` (push/PR to main+dev, weekly): lint + format + pyright; pytest on Linux/Windows/macOS × py3.12–3.14; non-blocking live PyPI test; build + wheel smoke test.
+- `.github/workflows/ci.yml` (push/PR to main+dev, weekly): lint + format + pyright; pytest on Linux/Windows/macOS × py3.12–3.14; non-blocking live PyPI test; build + wheel smoke test; `CI passed` gate job (the only check branch rules require).
+- Published to PyPI as `ghostapi` (`ghost-api` is taken by someone else).
 - `.github/workflows/release.yml` (tag `v*`): verify tag/version/main, test, build, publish to PyPI via trusted publishing (environment `pypi`), GitHub release.
 - Dependabot targets `dev`. Use `uv sync --locked` in CI, so commit `uv.lock` with dependency changes.
 
