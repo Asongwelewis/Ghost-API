@@ -1,0 +1,52 @@
+[project]
+name = "ghost-api"
+version = "0.1.0"
+description = "Catches hallucinated, removed and too-new API calls in AI-written code, checked against the exact versions in your lockfile."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Asongwe Lewis Fon" }]
+requires-python = ">=3.12"
+dependencies = [
+    "griffe>=2.4.1",
+    "httpx>=0.28.1",
+    "packaging>=26.3",
+    "pydantic>=2.14.2",
+    "pyyaml>=6.0.3",
+    "typer>=0.27.3",
+]
+
+[project.scripts]
+ghostapi = "ghostapi.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ghostapi"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/ghostapi/bootstrap.py" = ["E501"]  # agent instructions keep commands on one line
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: hits the real PyPI (run with GHOSTAPI_NETWORK_TESTS=1)"]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+    "types-pyyaml>=6.0.12.20260906",
+]
