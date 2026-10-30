@@ -4,7 +4,7 @@
 ## Quickstart
 
 ```sh
-uv tool install ghostapi         # or: pipx install ghostapi
+uv tool install ghostapi0        # or: pipx install ghostapi0 (the command is `ghostapi`)
 cd your-project
 ghostapi init                    # .ghost/ registry, agent instructions, check hooks
 ghostapi check                   # text | --format json | --format sarif

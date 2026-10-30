@@ -1,5 +1,5 @@
 [project]
-name = "ghostapi"
+name = "ghostapi0"
 version = "0.1.0"
 description = "Catches hallucinated, removed and too-new API calls in AI-written code, checked against the exact versions in your lockfile."
 readme = "README.md"
