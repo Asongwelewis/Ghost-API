@@ -5,7 +5,7 @@ Providers never import or execute the package they describe.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Protocol
 
 from ghostapi.models import ApiHistory, ApiKind
@@ -47,3 +47,27 @@ def default_providers(offline: bool | None = None) -> dict[ApiKind, Provider]:
         "python": PyPIProvider(PyPIIndex(http), cache),
         "npm": NpmProvider(NpmRegistry(http), cache),
     }
+
+
+def history_for(
+    providers: Mapping[ApiKind, Provider],
+    kind: ApiKind,
+    package: str,
+    version: str | None,
+    targets: Iterable[str],
+    npm_pins: Mapping[str, str],
+) -> ApiHistory | None:
+    """History from the right provider. An npm package without bundled types is answered from
+    its pinned `@types/*` package, as the TypeScript compiler would."""
+    provider = providers.get(kind)
+    if provider is None:
+        return None
+    targets = sorted(targets)
+    history = provider.history(package, version, targets)
+    if history is None and kind == "npm":
+        from ghostapi.providers.npm import types_package
+
+        typed = types_package(package)
+        if typed in npm_pins:
+            history = provider.history(typed, npm_pins[typed], targets)
+    return history

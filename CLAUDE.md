@@ -1,6 +1,6 @@
 # Ghost API
 
-Catches hallucinated, removed, too-new and moved API calls in AI-written code, checked against the **exact versions in the project's lockfile**. Python (PyPI) and JS/TS (npm) work; REST/GraphQL next. Shipped as a **CLI package** (`ghostapi`), with MCP and a GitHub Action as thin add-ons.
+Catches hallucinated, removed, too-new and moved API calls in AI-written code, checked against the **exact versions in the project's lockfile** (Python/PyPI, JS/TS/npm), and keeps the **project's own HTTP endpoints** consistent when several agents build them in parallel. Shipped as a **CLI package** (`ghostapi`) with agent hooks and a GitHub Action; MCP is on hold (no hosting).
 
 ## Why it exists (cite these, don't invent new stats)
 - ~19.7% of AI-suggested packages don't exist (slopsquatting study)
@@ -17,7 +17,7 @@ Catches hallucinated, removed, too-new and moved API calls in AI-written code, c
 6. **Precision over recall.** A false error costs more trust than a missed one.
 
 ## How it works: the registry
-The coding agent records every external API call in `.ghost/apis/<api>.yaml` (via `ghostapi register`, never by hand-editing). Ghost then checks it.
+Agents record what they use and provide in `.ghost/` via the CLI, never by hand: `apis/<api>/api.yaml` + `apis/<api>/calls/<target>.yaml` (one file per target, so parallel agents and git worktrees rarely touch the same file), `provides/<endpoint>.yaml` (endpoint owners / routes the scanner can't see), optional `config.yaml` (`http.internal_hosts`, `http.base_url_names`, `http.openapi`). All writes hold `.ghost/.lock` (`fsutil.exclusive_lock`) and replace files atomically; 0.1's single-file `apis/<api>.yaml` is still read and migrated on the next write.
 - **Registry = what the code claims to call** (removes guesswork, especially for REST). **Ghost's index = what really exists.** The registry is never trusted as truth, because the agent that hallucinates also writes it.
 - **Reconciliation** keeps the registry honest: a static scan finds calls missing from the registry (`unregistered-api-call`) and entries whose file, symbol or import no longer exists (`stale-entry`). Locations are `file` + `symbol` (+ `line_hint`), so ordinary edits don't break them.
 - **Deterministic enforcement**: `ghostapi init` writes agent instructions (AGENTS.md, CLAUDE.md, Cursor rules) and installs hooks (`hooks.py`, entry point `ghostapi hook <agent>`):
@@ -31,6 +31,9 @@ The coding agent records every external API call in `.ghost/apis/<api>.yaml` (vi
 ## Rules
 | Rule | Meaning |
 |---|---|
+| unknown-endpoint / wrong-method | a call to this project's own API that matches no route / not that method |
+| endpoint-removed | an edit (vs `HEAD`) removed a route other code still calls; reported to the editing agent at the callers |
+| duplicate-endpoint / similar-endpoint | two definitions of one route; near-identical paths (`/user/{id}` vs `/users/{id}`) |
 | unknown-symbol (+ "did you mean") | never existed in any version (UC1) |
 | removed-in | gone in pinned version, with replacement (UC2) |
 | too-new | added after pinned version (UC3) |
@@ -44,7 +47,10 @@ Finding fields: `rule`, `severity` (error/warning/info), `confidence` (high/medi
 
 ## Code layout (`src/ghostapi/`)
 - `models.py`: `Usage`, `ApiSymbol`, `Param`, `ApiHistory`, `Finding`
-- `registry.py`: `.ghost/apis/*.yaml` schema (pydantic), load/save/register/unregister
+- `registry.py`: `.ghost/` schema (pydantic), register/unregister, provide/unprovide, legacy migration; `fsutil.py`: lock + atomic write
+- `config.py`: `.ghost/config.yaml`
+- `endpoints/`: the project's own HTTP API. `__init__` (Endpoint/HttpCall, route-template normalisation across frameworks, matching, internal-URL test); `python.py` (FastAPI routers + include_router, Flask blueprints, Django path/include + DRF routers; requests/httpx incl. client base_url, f-strings, module constants); `javascript.py` (Express/Fastify/Hono/Koa routers + `use` mounts, `route()` chains, Next.js app/pages routes (needs next.config.*), NestJS controllers + setGlobalPrefix; fetch/$fetch/useFetch, axios incl. `create({baseURL})`); `index.py` (cross-file prefix composition; untraceable mounts → `prefix_known=False`, suffix match; Django roots; OpenAPI files; declared endpoints); `check.py` (rules; hook mode skips the project scan unless the edit touches calls/routes; `endpoint-removed` re-indexes with `git show HEAD:` for edited files). Calls only count as ours when relative, on an internal host or a configured base name, and their first segment is one our routes use.
+- `inventory.py`: `ghostapi list` / `ghostapi show` (endpoint: definitions, owner, callers; symbol: pinned signature + problems)
 - `paths.py`: symbol paths. Python `openai.OpenAI.chat`; npm `<module>:<export>.<member>` (`react:useState`, `react-dom/client:createRoot`) because specifiers contain dots/slashes. Never split paths by hand.
 - `resolver.py`: lockfile pins (uv.lock, poetry.lock, requirements.txt, pyproject; package-lock.json, pnpm-lock.yaml, yarn.lock v1/berry, ambiguous multi-version entries skipped), package.json deps, import-name → distribution
 - `extractors/`: `FileScan`; `python.py` (stdlib `ast`); `javascript.py` (tree-sitter: imports, require, re-exports, member chains, calls/new + arg counts, JSX and type positions). Bare specifiers count as external only if declared in package.json/lockfile (tsconfig aliases).
@@ -76,6 +82,7 @@ uv run ruff check . && uv run ruff format .
 uv run pyright
 uv run ghostapi --help
 ```
+Git Bash on Windows rewrites arguments starting with `/`: pass endpoint paths as `api/orders` (Ghost adds the slash) or set `MSYS_NO_PATHCONV=1`.
 
 ## Branching, CI/CD
 - `main` = released code only. `dev` = integration branch. Work on `feat/*` / `fix/*` branches, PR into `dev`; release by PR `dev` → `main`, then tag `vX.Y.Z` on main (must equal `pyproject` version).
@@ -89,10 +96,10 @@ uv run ghostapi --help
 Python 3.12+ · uv · typer · pydantic v2 · PyYAML · packaging · stdlib `ast` · griffe (static Python API loading) · tree-sitter + tree-sitter-typescript (JS/TS + `.d.ts`) · httpx. MCP server is on hold (no hosting infrastructure).
 
 ## Roadmap
-- **Done**: registry + drift rules, Python + JS/TS scanners, lockfiles (pip/uv/poetry/npm/pnpm/yarn), rule engine, PyPI + npm providers with version history, Claude/Codex/Cursor hooks, GitHub Action (diff-only, baseline, thresholds, SARIF), CI/CD.
+- **Done**: registry (concurrency-safe) + drift rules, Python + JS/TS scanners, lockfiles (pip/uv/poetry/npm/pnpm/yarn), rule engine, PyPI + npm providers with version history, project endpoint checks for multi-agent work (routes vs calls, removals, duplicates, owners, `list`/`show`), Claude/Codex/Cursor hooks, GitHub Action (diff-only, baseline, thresholds, SARIF), CI/CD.
 - **MVP (wk 1–4)**: monorepo workspaces · F5 fix suggestions from index diffs · `ghostapi watch` · F8 eval harness / benchmark. `ghostapi mcp` on hold (no infrastructure).
 - **v1**: unknown-package / slopsquat pre-install gate · what-if upgrade mode · Markdown/notebook snippets · web playground · public leaderboard.
-- **v1.5**: OpenAPI/REST, GraphQL, boto3/botocore, stdlib-by-runtime-version providers.
+- **v1.5**: external OpenAPI/REST and GraphQL providers, request/response body checks for own endpoints, boto3/botocore, stdlib-by-runtime-version providers.
 - **Later**: Go/Java, gRPC/proto, config files (Tailwind/Next), safe codemods, editor extension, maintainer radar.
 
 ## Working agreements

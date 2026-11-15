@@ -11,12 +11,13 @@ from typing import Annotated, cast
 
 import typer
 
-from ghostapi import __version__, bootstrap, hooks, registry
+from ghostapi import __version__, bootstrap, hooks, inventory, registry
 from ghostapi import baseline as baselines
 from ghostapi.checker import Report, run_check
 from ghostapi.models import ApiKind, Severity
 from ghostapi.output import RENDERERS, to_sarif
 from ghostapi.project import changed_files, diff_files, rel, source_files, staged_files
+from ghostapi.providers import default_providers
 from ghostapi.registry import Location, RegistryError
 from ghostapi.resolver import normalize, resolve_versions
 
@@ -109,6 +110,7 @@ def register(
         str | None, typer.Option(help="Import root if it differs from --api.")
     ] = None,
     source: Annotated[str | None, typer.Option(help="Spec URL for REST/GraphQL.")] = None,
+    owner: Annotated[str | None, typer.Option(help="Who owns this API (agent, team).")] = None,
     root: RootOption = Path("."),
 ) -> None:
     """Record that FILE calls TARGET of API."""
@@ -129,6 +131,7 @@ def register(
             version=version,
             module=module,
             source=source,
+            owner=owner,
         )
     except RegistryError as exc:
         raise _fail(str(exc)) from exc
@@ -161,6 +164,108 @@ def _fails(report: Report, fail_on: FailOn) -> bool:
         return False
     levels = {Severity.ERROR} if fail_on is FailOn.error else {Severity.ERROR, Severity.WARNING}
     return any(f.severity in levels for f in report.findings)
+
+
+class Method(StrEnum):
+    GET = "GET"
+    POST = "POST"
+    PUT = "PUT"
+    PATCH = "PATCH"
+    DELETE = "DELETE"
+    HEAD = "HEAD"
+    OPTIONS = "OPTIONS"
+    ANY = "*"
+
+
+@app.command()
+def provide(
+    method: Annotated[
+        Method, typer.Option(case_sensitive=False, help="HTTP method, or * for any.")
+    ],
+    path: Annotated[str, typer.Option(help="Route path, e.g. /api/orders/{id}.")],
+    owner: Annotated[str | None, typer.Option(help="Who owns it (agent, team).")] = None,
+    description: Annotated[str | None, typer.Option(help="What it is for.")] = None,
+    file: Annotated[Path | None, typer.Option(help="Where it is implemented.")] = None,
+    symbol: Annotated[str | None, typer.Option(help="Handler function.")] = None,
+    root: RootOption = Path("."),
+) -> None:
+    """Declare an endpoint this project serves: who owns it, or one the route scanner can't see."""
+    relative = None
+    if file is not None:
+        relative = rel(root, file if file.is_absolute() else root / file)
+        if relative is None:
+            raise _fail(f"{file} is outside {root.resolve()}")
+    try:
+        path = inventory.endpoint_path(path)
+    except inventory.QueryError as exc:
+        raise _fail(str(exc)) from exc
+    endpoint = registry.ProvidedEndpoint(
+        method=method.value, path=path, owner=owner, description=description,
+        file=relative, symbol=symbol,
+    )  # fmt: skip
+    try:
+        written = registry.provide(root, endpoint)
+    except RegistryError as exc:
+        raise _fail(str(exc)) from exc
+    typer.echo(f"declared {endpoint.method} {path} in {rel(root, written) or written}")
+
+
+@app.command()
+def unprovide(
+    method: Annotated[Method, typer.Option(case_sensitive=False)],
+    path: Annotated[str, typer.Option()],
+    root: RootOption = Path("."),
+) -> None:
+    """Remove an endpoint declaration."""
+    try:
+        path = inventory.endpoint_path(path)
+    except inventory.QueryError as exc:
+        raise _fail(str(exc)) from exc
+    removed = registry.unprovide(root, method.value, path)
+    typer.echo("removed" if removed else "no such declaration")
+
+
+@app.command(name="list")
+def list_apis(
+    root: RootOption = Path("."),
+    format: Annotated[Format, typer.Option("--format", "-f")] = Format.text,
+) -> None:
+    """Every endpoint this project serves and every external API it uses."""
+    data = inventory.inventory(root)
+    typer.echo(
+        json.dumps(data, indent=2) if format is Format.json else inventory.text_inventory(data)
+    )
+
+
+@app.command()
+def show(
+    target: Annotated[
+        str,
+        typer.Argument(
+            help='"POST /api/orders", "/api/orders/{id}", "openai.OpenAI", "react:useState".'
+        ),
+    ],
+    root: RootOption = Path("."),
+    format: Annotated[Format, typer.Option("--format", "-f")] = Format.text,
+    offline: Annotated[bool | None, typer.Option("--offline/--online")] = None,
+) -> None:
+    """The current contract of an endpoint or library symbol: check it before writing a call."""
+    if inventory.is_endpoint_query(target):  # an endpoint, not a library symbol
+        try:
+            infos = inventory.find_endpoints(root, target)
+        except inventory.QueryError as exc:
+            raise _fail(str(exc)) from exc
+        if format is Format.json:
+            typer.echo(json.dumps([i.to_dict() for i in infos], indent=2))
+        else:
+            typer.echo(inventory.text_endpoints(infos))
+        if not infos:
+            raise typer.Exit(1)
+        return
+    data = inventory.describe_symbol(root, target, default_providers(offline))
+    typer.echo(json.dumps(data, indent=2) if format is Format.json else inventory.text_symbol(data))
+    if data["status"] not in ("ok", "unverifiable", "deprecated"):
+        raise typer.Exit(1)
 
 
 class HookAgent(StrEnum):

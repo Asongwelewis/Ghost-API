@@ -36,6 +36,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/ghostapi/bootstrap.py" = ["E501"]  # agent instructions keep commands on one line
+"tests/test_endpoints.py" = ["E501"]  # fixtures embed framework source code verbatim
 
 [tool.pyright]
 include = ["src", "tests"]

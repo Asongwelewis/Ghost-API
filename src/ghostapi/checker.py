@@ -9,12 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ghostapi import registry
+from ghostapi.config import load_config
+from ghostapi.endpoints.check import check_endpoints
 from ghostapi.engine import check_usage
 from ghostapi.extractors import FileScan, javascript, python
 from ghostapi.models import ApiHistory, ApiKind, Confidence, Finding, Severity, Usage
 from ghostapi.project import is_checkable, local_modules, rel, source_files
-from ghostapi.providers import Provider, default_providers
-from ghostapi.providers.npm import types_package
+from ghostapi.providers import Provider, default_providers, history_for
 from ghostapi.reconcile import reconcile
 from ghostapi.registry import ApiEntry
 from ghostapi.resolver import Pins, normalize, npm_declared, python_dist_for, resolve_versions
@@ -81,17 +82,7 @@ def run_check(
     histories: dict[tuple[ApiKind, str, str | None], ApiHistory | None] = {}
     for key, targets in wanted.items():
         kind, package, version = key
-        provider = providers.get(kind)
-        if provider is None:
-            histories[key] = None
-            continue
-        history = provider.history(package, version, sorted(targets))
-        if history is None and kind == "npm":
-            # No bundled types: TypeScript falls back to DefinitelyTyped, so do we.
-            typed = types_package(package)
-            if typed in pins["npm"]:
-                history = provider.history(typed, pins["npm"][typed], sorted(targets))
-        histories[key] = history
+        histories[key] = history_for(providers, kind, package, version, targets, pins["npm"])
 
     unverifiable = 0
     for kind, usage, package, version in subjects:
@@ -100,6 +91,13 @@ def run_check(
             unverifiable += 1
             continue
         findings += check_usage(usage, package=package, version=version, history=history)
+
+    findings += check_endpoints(
+        root,
+        [r for p in source_files(root) if (r := rel(root, p)) is not None],
+        None if full else {s.file for s in scans},
+        load_config(root),
+    )
 
     # Don't ask the agent to register a call it must fix first.
     broken = {(f.file, f.line) for f in findings if f.severity is Severity.ERROR}

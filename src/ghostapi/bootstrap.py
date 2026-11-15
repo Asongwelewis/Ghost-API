@@ -25,16 +25,27 @@ CURSOR_STOP_HOOK = "ghostapi hook cursor-stop"
 CODEX_HOOK = "ghostapi hook codex"
 
 INSTRUCTIONS = """\
-## External APIs (Ghost API)
-This project records every external API call in `.ghost/apis/` and checks it against the versions
-actually pinned in the lockfile.
-- When you add or change code that calls an external library, SDK, REST endpoint or GraphQL
-  operation, record it:
-  `ghostapi register --api <package> --kind <python|npm|openapi|graphql> --target <target> --file <path> --symbol <function-or-class> --line <n>`
-  Targets: Python `package.module.Name.attr`; npm `<module>:<export>.<member>` (e.g. `react:useState`, `axios:default.get`); REST `"METHOD /path"`.
-  `ghostapi check` prints the exact `register` command for any call it finds unregistered.
-- When you remove or move such a call, run `ghostapi unregister --api <package> --target <target> --file <path>` and register the new location.
-- Before saying the work is done, run `ghostapi check` and fix every error. Don't dismiss a finding unless you can show it is wrong.
+## APIs (Ghost API)
+Ghost checks this project's API calls against reality: external libraries against the versions
+pinned in the lockfile, and this project's own HTTP endpoints against the routes in the code.
+Other agents may be changing the same APIs while you work, so look things up instead of
+relying on memory.
+
+Before you write a call:
+- Library symbol: `ghostapi show <target>` gives the real signature in the pinned version
+  (targets: Python `package.module.Name`; npm `<module>:<export>.<member>`, e.g. `react:useState`).
+- This project's endpoint: `ghostapi show "POST /api/orders"` gives where it is defined, who owns
+  it and who calls it. `ghostapi list` shows every endpoint and external API.
+
+When you add or change code:
+- Calling an external library or service: record it with
+  `ghostapi register --api <package> --kind <python|npm|openapi|graphql> --target <target> --file <path> --symbol <function-or-class> --line <n>`.
+  `ghostapi check` prints the exact command for any call it finds unregistered.
+- Removing or moving such a call: `ghostapi unregister --api <package> --target <target> --file <path>`, then register the new location.
+- Creating an endpoint other code will call: `ghostapi provide --method POST --path api/orders --owner <your agent or task name>`.
+- Changing or removing an endpoint: run `ghostapi show` on it first. If it has callers, update them in the same change or keep the old route until they move. Ghost reports `endpoint-removed` for callers you break.
+
+Before saying the work is done, run `ghostapi check` and fix every error. Don't dismiss a finding unless you can show it is wrong.
 """
 
 CURSOR_HEADER = "---\ndescription: Ghost API registry rules\nalwaysApply: true\n---\n"
@@ -42,10 +53,18 @@ PRE_COMMIT = "#!/bin/sh\n# installed by ghostapi init\nexec ghostapi check --sta
 GHOST_README = """\
 # .ghost
 
-Registry of the external APIs this project calls, one YAML file per API, maintained with
-`ghostapi register` / `ghostapi unregister`. Commit this folder. Run `ghostapi check` to verify.
+What this project's agents have declared about the APIs it uses and provides. Maintained with
+`ghostapi register`, `ghostapi provide` and their `un-` counterparts; never edit by hand.
+Commit this folder. `ghostapi list` and `ghostapi show` read it; `ghostapi check` verifies it.
+
+- `apis/<api>/api.yaml`: an external API (package or service) and its pinned version and owner
+- `apis/<api>/calls/*.yaml`: one file per called target, with the places that call it
+- `provides/*.yaml`: endpoints this project serves, with their owners
+- `config.yaml` (optional): which hosts count as this project's own API, and more
 """
-GHOST_GITIGNORE = "# scratch state for agent hooks\n.pending\n"
+GHOST_GITIGNORE = (
+    "# local state: hook scratch files and the registry lock\n.pending\n.lock\n*.tmp\n"
+)
 
 
 @dataclass
