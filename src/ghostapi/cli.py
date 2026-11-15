@@ -11,11 +11,11 @@ from typing import Annotated, cast
 
 import typer
 
-from ghostapi import __version__, bootstrap, registry
+from ghostapi import __version__, bootstrap, hooks, registry
 from ghostapi.checker import Report, run_check
 from ghostapi.models import ApiKind, Severity
-from ghostapi.output import RENDERERS, to_text
-from ghostapi.project import is_checkable, rel, source_files, staged_files
+from ghostapi.output import RENDERERS
+from ghostapi.project import changed_files, rel, source_files, staged_files
 from ghostapi.registry import Location, RegistryError
 from ghostapi.resolver import normalize, resolve_versions
 
@@ -72,17 +72,21 @@ def init(
     root: RootOption = Path("."),
     agent: Annotated[
         list[str] | None,
-        typer.Option(help="agents-md | claude | cursor | git. Repeatable. Default: auto-detect."),
+        typer.Option(
+            help="agents-md | claude | cursor | codex | git. Repeatable. Default: detect."
+        ),
     ] = None,
 ) -> None:
     """Create .ghost/, add agent instructions and install check hooks."""
-    allowed = {"agents-md", "claude", "cursor", "git"}
+    allowed = set(bootstrap.AGENTS)
     if agent and not set(agent) <= allowed:
         raise _fail(f"unknown --agent {sorted(set(agent) - allowed)}; use {sorted(allowed)}")
     try:
         result = bootstrap.init(root, cast(list[bootstrap.Agent], agent) if agent else None)
     except json.JSONDecodeError as exc:
-        raise _fail(f".claude/settings.json is not valid JSON ({exc}); fix it and rerun") from exc
+        raise _fail(
+            f"an existing settings/hooks JSON file is invalid ({exc}); fix it and rerun"
+        ) from exc
     for name in result.changed:
         typer.echo(f"  updated  {name}")
     for name in result.skipped:
@@ -157,25 +161,26 @@ def _fails(report: Report, fail_on: FailOn) -> bool:
     return any(f.severity in levels for f in report.findings)
 
 
-def _run_hook() -> None:
-    """Claude Code PostToolUse hook: check the edited file; exit 2 sends findings to the agent."""
-    try:
-        payload = json.load(sys.stdin)
-    except json.JSONDecodeError:
-        raise typer.Exit(0) from None
-    edited = payload.get("tool_input", {}).get("file_path")
-    if not edited or not is_checkable(edited):
-        raise typer.Exit(0)
-    root = Path(payload.get("cwd") or ".")
-    try:
-        edited_path = Path(edited) if Path(edited).is_absolute() else root / edited
-        report = run_check(root, files=[edited_path])
-    except RegistryError as exc:
-        typer.echo(f"ghostapi: the registry is invalid: {exc}", err=True)
-        raise typer.Exit(2) from exc
-    if _fails(report, FailOn.warning):
-        typer.echo(to_text(report), err=True)
-        raise typer.Exit(2)
+class HookAgent(StrEnum):
+    claude = "claude"
+    codex = "codex"
+    cursor_edit = "cursor-edit"
+    cursor_stop = "cursor-stop"
+
+
+def _emit(result: hooks.HookResult) -> None:
+    if result.stdout:
+        typer.echo(result.stdout)
+    if result.stderr:
+        typer.echo(result.stderr, err=True)
+    if result.code:
+        raise typer.Exit(result.code)
+
+
+@app.command()
+def hook(agent: Annotated[HookAgent, typer.Argument(help="Which agent is calling.")]) -> None:
+    """Entry point for agent hooks (installed by `ghostapi init`); reads the payload on stdin."""
+    _emit(hooks.run(agent.value, sys.stdin.read()))
 
 
 @app.command()
@@ -187,7 +192,12 @@ def check(
     format: Annotated[Format, typer.Option("--format", "-f")] = Format.text,
     fail_on: Annotated[FailOn, typer.Option(help="Exit 1 at this severity.")] = FailOn.error,
     staged: Annotated[bool, typer.Option(help="Only git-staged files.")] = False,
-    hook: Annotated[bool, typer.Option(help="Run as a Claude Code PostToolUse hook.")] = False,
+    changed: Annotated[
+        bool, typer.Option(help="Only files git sees as modified or new (any agent, any editor).")
+    ] = False,
+    hook: Annotated[
+        bool, typer.Option(help="Deprecated alias for `ghostapi hook claude`.", hidden=True)
+    ] = False,
     offline: Annotated[
         bool | None,
         typer.Option("--offline/--online", help="Use only cached indexes (env GHOSTAPI_OFFLINE)."),
@@ -195,15 +205,15 @@ def check(
 ) -> None:
     """Check API usage against the pinned versions and the registry."""
     if hook:
-        _run_hook()
+        _emit(hooks.run("claude", sys.stdin.read()))
         return
 
     files: list[Path] | None = None
-    if staged:
+    if staged or changed:
         try:
-            files = staged_files(root)
+            files = staged_files(root) if staged else changed_files(root)
         except (OSError, subprocess.CalledProcessError) as exc:
-            raise _fail(f"could not list staged files: {exc}") from exc
+            raise _fail(f"could not list files from git: {exc}") from exc
     elif paths:
         files = []
         for path in paths:

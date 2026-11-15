@@ -21,7 +21,7 @@ def test_init_is_idempotent_and_keeps_user_content(tmp_path):
     assert claude_md.count("ghostapi:start") == 1
     assert (tmp_path / "AGENTS.md").exists()
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    assert settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"] == "ghostapi check --hook"
+    assert settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"] == "ghostapi hook claude"
     assert "ghostapi check --staged" in (tmp_path / ".git" / "hooks" / "pre-commit").read_text()
 
 

@@ -7,16 +7,22 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from ghostapi.registry import GHOST_DIR, apis_dir
 
-Agent = Literal["agents-md", "claude", "cursor", "git"]
+Agent = Literal["agents-md", "claude", "cursor", "codex", "git"]
+AGENTS: tuple[Agent, ...] = ("agents-md", "claude", "cursor", "codex", "git")
 
 START, END = "<!-- ghostapi:start -->", "<!-- ghostapi:end -->"
-HOOK_COMMAND = "ghostapi check --hook"
+HOOK_TIMEOUT = 180  # the first check of a new package downloads and indexes it
+CLAUDE_HOOK = "ghostapi hook claude"
+CURSOR_EDIT_HOOK = "ghostapi hook cursor-edit"
+CURSOR_STOP_HOOK = "ghostapi hook cursor-stop"
+CODEX_HOOK = "ghostapi hook codex"
 
 INSTRUCTIONS = """\
 ## External APIs (Ghost API)
@@ -39,6 +45,7 @@ GHOST_README = """\
 Registry of the external APIs this project calls, one YAML file per API, maintained with
 `ghostapi register` / `ghostapi unregister`. Commit this folder. Run `ghostapi check` to verify.
 """
+GHOST_GITIGNORE = "# scratch state for agent hooks\n.pending\n"
 
 
 @dataclass
@@ -53,6 +60,8 @@ def detect_agents(root: Path) -> list[Agent]:
         agents.append("claude")
     if (root / ".cursor").is_dir():
         agents.append("cursor")
+    if (root / ".codex").is_dir():
+        agents.append("codex")
     if (root / ".git").is_dir():
         agents.append("git")
     return agents
@@ -78,19 +87,70 @@ def write_block(path: Path, body: str, header: str = "") -> bool:
     return True
 
 
+def _load_json(path: Path) -> dict[str, Any]:
+    """Existing JSON config, or {}. Raises json.JSONDecodeError rather than overwrite a bad file."""
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise json.JSONDecodeError("expected a JSON object", "", 0)
+    return data
+
+
+def _save_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _has_ghost_command(groups: list[Any]) -> bool:
+    for group in groups:
+        entries = group.get("hooks", [group]) if isinstance(group, dict) else []
+        if any("ghostapi" in str(h.get("command", "")) for h in entries if isinstance(h, dict)):
+            return True
+    return False
+
+
+def _install_post_tool_hook(path: Path, matcher: str, command: str) -> bool:
+    """Claude Code and Codex share this hooks layout."""
+    settings = _load_json(path)
+    post = settings.setdefault("hooks", {}).setdefault("PostToolUse", [])
+    if _has_ghost_command(post):
+        return False
+    hook = {"type": "command", "command": command, "timeout": HOOK_TIMEOUT}
+    post.append({"matcher": matcher, "hooks": [hook]})
+    _save_json(path, settings)
+    return True
+
+
 def install_claude_hook(root: Path) -> bool:
     path = root / ".claude" / "settings.json"
-    settings = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    post = settings.setdefault("hooks", {}).setdefault("PostToolUse", [])
-    for group in post:
-        if any(HOOK_COMMAND in h.get("command", "") for h in group.get("hooks", [])):
-            return False
-    # The first check of a new package downloads and indexes it, so allow more than the default.
-    hook = {"type": "command", "command": HOOK_COMMAND, "timeout": 180}
-    post.append({"matcher": "Edit|MultiEdit|Write", "hooks": [hook]})
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    return True
+    return _install_post_tool_hook(path, "Edit|MultiEdit|Write", CLAUDE_HOOK)
+
+
+def install_codex_hook(root: Path) -> bool:
+    # Codex loads project hooks only after the user trusts the project's .codex/ folder.
+    return _install_post_tool_hook(
+        root / ".codex" / "hooks.json", "apply_patch|Edit|Write", CODEX_HOOK
+    )
+
+
+def install_cursor_hooks(root: Path) -> bool:
+    path = root / ".cursor" / "hooks.json"
+    config = _load_json(path)
+    config.setdefault("version", 1)
+    hooks = config.setdefault("hooks", {})
+    changed = False
+    for event, command, extra in (
+        ("afterFileEdit", CURSOR_EDIT_HOOK, {}),
+        ("stop", CURSOR_STOP_HOOK, {"timeout": HOOK_TIMEOUT}),
+    ):
+        entries = hooks.setdefault(event, [])
+        if not _has_ghost_command(entries):
+            entries.append({"command": command, **extra})
+            changed = True
+    if changed:
+        _save_json(path, config)
+    return changed
 
 
 def install_pre_commit(root: Path) -> bool | None:
@@ -109,10 +169,11 @@ def init(root: Path, agents: list[Agent] | None = None) -> InitResult:
     agents = detect_agents(root) if agents is None else agents
 
     apis_dir(root).mkdir(parents=True, exist_ok=True)
-    readme = root / GHOST_DIR / "README.md"
-    if not readme.exists():
-        readme.write_text(GHOST_README, encoding="utf-8")
-        result.changed.append(f"{GHOST_DIR}/README.md")
+    for name, content in (("README.md", GHOST_README), (".gitignore", GHOST_GITIGNORE)):
+        path = root / GHOST_DIR / name
+        if not path.exists():
+            path.write_text(content, encoding="utf-8")
+            result.changed.append(f"{GHOST_DIR}/{name}")
 
     targets: dict[Agent, tuple[str, str]] = {
         "agents-md": ("AGENTS.md", ""),
@@ -124,9 +185,18 @@ def init(root: Path, agents: list[Agent] | None = None) -> InitResult:
             changed = write_block(root / name, INSTRUCTIONS, header)
             (result.changed if changed else result.skipped).append(name)
 
-    if "claude" in agents:
-        name = ".claude/settings.json (PostToolUse hook)"
-        (result.changed if install_claude_hook(root) else result.skipped).append(name)
+    installers: tuple[tuple[Agent, str, Callable[[Path], bool]], ...] = (
+        ("claude", ".claude/settings.json (PostToolUse hook)", install_claude_hook),
+        ("cursor", ".cursor/hooks.json (afterFileEdit + stop hooks)", install_cursor_hooks),
+        (
+            "codex",
+            ".codex/hooks.json (PostToolUse; trust the project in Codex)",
+            install_codex_hook,
+        ),
+    )
+    for agent, name, install in installers:
+        if agent in agents:
+            (result.changed if install(root) else result.skipped).append(name)
 
     if "git" in agents:
         installed = install_pre_commit(root)

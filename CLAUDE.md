@@ -20,7 +20,13 @@ Catches hallucinated, removed, too-new and moved API calls in AI-written code, c
 The coding agent records every external API call in `.ghost/apis/<api>.yaml` (via `ghostapi register`, never by hand-editing). Ghost then checks it.
 - **Registry = what the code claims to call** (removes guesswork, especially for REST). **Ghost's index = what really exists.** The registry is never trusted as truth, because the agent that hallucinates also writes it.
 - **Reconciliation** keeps the registry honest: a static scan finds calls missing from the registry (`unregistered-api-call`) and entries whose file, symbol or import no longer exists (`stale-entry`). Locations are `file` + `symbol` (+ `line_hint`), so ordinary edits don't break them.
-- **Deterministic enforcement**: `ghostapi init` writes agent instructions (AGENTS.md, CLAUDE.md, Cursor rules) and installs hooks: a Claude Code `PostToolUse` hook (`ghostapi check --hook`, exit 2 feeds findings back to the agent) and a git pre-commit hook (`ghostapi check --staged`).
+- **Deterministic enforcement**: `ghostapi init` writes agent instructions (AGENTS.md, CLAUDE.md, Cursor rules) and installs hooks (`hooks.py`, entry point `ghostapi hook <agent>`):
+  - Claude Code `.claude/settings.json` PostToolUse `Edit|MultiEdit|Write` → exit 2 + stderr reaches the model.
+  - Codex `.codex/hooks.json` PostToolUse `apply_patch|Edit|Write` → paths parsed from the patch text; exit 2 + stderr. Codex runs project hooks only once the user trusts `.codex/`.
+  - Cursor `.cursor/hooks.json`: `afterFileEdit` can't reply, so it appends to `.ghost/.pending`; `stop` checks those files and returns `followup_message` (Cursor caps follow-up loops at 5).
+  - git pre-commit (`ghostapi check --staged`). Any other agent or editor: `ghostapi check --changed` (git-modified + untracked files).
+  - Not supported, on purpose: Gemini CLI (replaced by Antigravity, June 2026); Copilot and Windsurf hooks don't document the edited file's path.
+  - Hooks never fail on a payload they don't understand: they exit 0.
 
 ## Rules
 | Rule | Meaning |
@@ -54,7 +60,8 @@ Finding fields: `rule`, `severity` (error/warning/info), `confidence` (high/medi
 - `reconcile.py`: registry ↔ code drift rules
 - `checker.py`: orchestrates everything into a `Report`
 - `output.py`: text / JSON / SARIF 2.1.0
-- `bootstrap.py`: `init` (agent instructions + hooks, idempotent, never clobbers user files)
+- `bootstrap.py`: `init` (agent instructions + hooks, idempotent, merges into existing JSON configs, refuses to overwrite invalid ones)
+- `hooks.py`: per-agent hook adapters (payload → files → check → that agent's feedback channel)
 - `cli.py`: typer adapter only, no logic
 
 Adding an API type = a provider (+ an extractor if it can be scanned). Never new rules.

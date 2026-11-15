@@ -14,6 +14,16 @@ Your coding agent records each external API call with `ghostapi register`; Ghost
 recorded and scanned call against the versions pinned in your lockfile, and flags calls that are
 missing from the registry or entries that no longer match the code.
 
+`ghostapi init` wires the check into the agents it finds, so problems go straight back to the
+agent after it edits a file:
+
+| Agent | How Ghost runs | How the agent hears about problems |
+|---|---|---|
+| Claude Code | `PostToolUse` hook after every edit | hook output (exit 2) |
+| OpenAI Codex | `PostToolUse` hook on `apply_patch` (trust the project's `.codex/` folder) | hook output (exit 2) |
+| Cursor | edits recorded, checked when the agent stops | a follow-up message |
+| Anything else | `ghostapi check --changed`, the git pre-commit hook, or CI | command output |
+
 Example on a project pinned to `openai==1.40.0`:
 
 ```

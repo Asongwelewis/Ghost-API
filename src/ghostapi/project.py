@@ -59,3 +59,28 @@ def staged_files(root: Path) -> list[Path]:
         check=True,
     )
     return [root / name for name in result.stdout.split("\0") if name]
+
+
+def changed_files(root: Path) -> list[Path]:
+    """Files git sees as modified, added or untracked; for agents with no edit hook."""
+    result = subprocess.run(
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    entries = result.stdout.split("\0")
+    files: list[Path] = []
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        status, name = entry[:2], entry[3:]
+        if status[0] in "RC":
+            i += 1  # renames are followed by the old path
+        if "D" not in status:
+            files.append(root / name)
+    return files
