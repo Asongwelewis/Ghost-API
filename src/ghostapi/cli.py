@@ -15,7 +15,7 @@ from ghostapi import __version__, bootstrap, registry
 from ghostapi.checker import Report, run_check
 from ghostapi.models import ApiKind, Severity
 from ghostapi.output import RENDERERS, to_text
-from ghostapi.project import python_files, rel, staged_files
+from ghostapi.project import is_checkable, rel, source_files, staged_files
 from ghostapi.registry import Location, RegistryError
 from ghostapi.resolver import normalize, resolve_versions
 
@@ -164,7 +164,7 @@ def _run_hook() -> None:
     except json.JSONDecodeError:
         raise typer.Exit(0) from None
     edited = payload.get("tool_input", {}).get("file_path")
-    if not edited or not edited.endswith(".py"):
+    if not edited or not is_checkable(edited):
         raise typer.Exit(0)
     root = Path(payload.get("cwd") or ".")
     try:
@@ -208,7 +208,7 @@ def check(
         files = []
         for path in paths:
             resolved = path if path.is_absolute() else root / path
-            files.extend(python_files(resolved) if resolved.is_dir() else [resolved])
+            files.extend(source_files(resolved) if resolved.is_dir() else [resolved])
 
     try:
         report = run_check(root, files=files, offline=offline)

@@ -24,7 +24,9 @@ This project records every external API call in `.ghost/apis/` and checks it aga
 actually pinned in the lockfile.
 - When you add or change code that calls an external library, SDK, REST endpoint or GraphQL
   operation, record it:
-  `ghostapi register --api <package> --kind <python|npm|openapi|graphql> --target <dotted.path or "METHOD /path"> --file <path> --symbol <function-or-class> --line <n>`
+  `ghostapi register --api <package> --kind <python|npm|openapi|graphql> --target <target> --file <path> --symbol <function-or-class> --line <n>`
+  Targets: Python `package.module.Name.attr`; npm `<module>:<export>.<member>` (e.g. `react:useState`, `axios:default.get`); REST `"METHOD /path"`.
+  `ghostapi check` prints the exact `register` command for any call it finds unregistered.
 - When you remove or move such a call, run `ghostapi unregister --api <package> --target <target> --file <path>` and register the new location.
 - Before saying the work is done, run `ghostapi check` and fix every error. Don't dismiss a finding unless you can show it is wrong.
 """

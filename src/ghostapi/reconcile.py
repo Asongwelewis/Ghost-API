@@ -7,15 +7,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ghostapi import registry
-from ghostapi.extractors.python import FileScan
+from ghostapi.extractors import FileScan
 from ghostapi.models import Confidence, Finding, Severity
+from ghostapi.paths import contains, display, related
 from ghostapi.registry import ApiEntry, Location
 from ghostapi.resolver import Pins, normalize, python_dist_for
 
-
-def _related(a: str, b: str) -> bool:
-    """True when one dotted path is the other or contains it (`openai` covers `openai.OpenAI`)."""
-    return a == b or a.startswith(b + ".") or b.startswith(a + ".")
+_SCANNED_KINDS = ("python", "npm")
 
 
 def reconcile(
@@ -59,11 +57,11 @@ def _version_mismatches(root: Path, entries: Sequence[ApiEntry], pins: Pins) -> 
 def _stale_reason(root: Path, entry: ApiEntry, loc: Location, scan: FileScan | None) -> str | None:
     if not (root / loc.file).is_file():
         return "that file no longer exists"
-    if scan is None or scan.error is not None or entry.kind != "python":
+    if scan is None or scan.error is not None or entry.kind not in _SCANNED_KINDS:
         return None
     if loc.symbol and loc.symbol != "<module>" and loc.symbol not in scan.defined:
         return f"`{loc.symbol}` is not defined in that file"
-    import_root = entry.import_root.split(".")[0]
+    import_root = entry.api if entry.kind == "npm" else entry.import_root.split(".")[0]
     if import_root not in scan.imported_roots:
         return f"that file does not import `{import_root}`"
     return None
@@ -88,7 +86,10 @@ def _stale_entries(
                         rule="stale-entry",
                         severity=Severity.WARNING,
                         confidence=Confidence.HIGH,
-                        message=f"Registry says `{call.target}` is used in {where}, but {reason}.",
+                        message=(
+                            f"Registry says `{display(call.target)}` is used in {where}, "
+                            f"but {reason}."
+                        ),
                         file=_registry_file(root, entry),
                         api=entry.api,
                         target=call.target,
@@ -106,7 +107,7 @@ def _unregistered(
 ) -> list[Finding]:
     registered: dict[str, list[str]] = defaultdict(list)  # file -> targets
     for entry in entries:
-        if entry.kind != "python":
+        if entry.kind not in _SCANNED_KINDS:
             continue
         for call in entry.calls:
             for loc in call.used_in:
@@ -118,13 +119,20 @@ def _unregistered(
         targets = {u.target for u in scan.usages}
         for usage in scan.usages:
             # `import openai` is implied by `openai.OpenAI(...)`; report only the deepest paths.
-            if usage.target in reported or any(t.startswith(usage.target + ".") for t in targets):
+            if usage.target in reported or any(
+                t != usage.target and contains(usage.target, t) for t in targets
+            ):
                 continue
-            if any(_related(usage.target, t) for t in registered[scan.file]):
+            if any(related(usage.target, t) for t in registered[scan.file]):
                 continue
             reported.add(usage.target)
-            api = python_dist_for(usage.target, pins["python"]) or usage.module
-            command = f"ghostapi register --api {api} --target {usage.target} --file {scan.file}"
+            if scan.kind == "npm":
+                api = usage.module
+                command = f"ghostapi register --kind npm --api {api} --target {usage.target}"
+            else:
+                api = python_dist_for(usage.target, pins["python"]) or usage.module
+                command = f"ghostapi register --api {api} --target {usage.target}"
+            command += f" --file {scan.file}"
             if usage.symbol != "<module>":
                 command += f" --symbol {usage.symbol}"
             if usage.line is not None:
@@ -134,7 +142,9 @@ def _unregistered(
                     rule="unregistered-api-call",
                     severity=Severity.WARNING,
                     confidence=Confidence.HIGH,
-                    message=f"`{usage.target}` is used here but is not in the Ghost registry.",
+                    message=(
+                        f"`{display(usage.target)}` is used here but is not in the Ghost registry."
+                    ),
                     file=scan.file,
                     line=usage.line,
                     col=usage.col,

@@ -73,6 +73,7 @@ class ApiHistory:
     package: str
     symbols: dict[str, ApiSymbol] = field(default_factory=dict)
     docs_url: str | None = None
+    version: str | None = None  # set when the answer comes from another package's versions
 
 
 @dataclass

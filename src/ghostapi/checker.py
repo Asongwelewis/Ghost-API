@@ -10,13 +10,14 @@ from pathlib import Path
 
 from ghostapi import registry
 from ghostapi.engine import check_usage
-from ghostapi.extractors.python import FileScan, scan_file
+from ghostapi.extractors import FileScan, javascript, python
 from ghostapi.models import ApiHistory, ApiKind, Confidence, Finding, Severity, Usage
-from ghostapi.project import local_modules, python_files, rel
+from ghostapi.project import is_checkable, local_modules, rel, source_files
 from ghostapi.providers import Provider, default_providers
+from ghostapi.providers.npm import types_package
 from ghostapi.reconcile import reconcile
 from ghostapi.registry import ApiEntry
-from ghostapi.resolver import Pins, normalize, python_dist_for, resolve_versions
+from ghostapi.resolver import Pins, normalize, npm_declared, python_dist_for, resolve_versions
 
 
 @dataclass
@@ -38,14 +39,24 @@ def run_check(
     entries = registry.load(root)
     pins = resolve_versions(root)
     skip = set(sys.stdlib_module_names) | local_modules(root)
+    # Bare specifiers can be tsconfig path aliases; when the project declares its packages,
+    # only those count as external.
+    declared = set(pins["npm"]) | npm_declared(root)
+
+    def is_external(package: str) -> bool:
+        return package in declared if declared else True
 
     full = files is None
-    candidates = python_files(root) if files is None else [f for f in files if f.suffix == ".py"]
+    candidates = source_files(root) if files is None else [f for f in files if is_checkable(f)]
     scans: list[FileScan] = []
     for path in candidates:
         relative = rel(root, path)
-        if relative is not None and path.is_file():
-            scans.append(scan_file(path, relative, skip))
+        if relative is None or not path.is_file():
+            continue
+        if path.suffix == ".py":
+            scans.append(python.scan_file(path, relative, skip))
+        else:
+            scans.append(javascript.scan_file(path, relative, is_external))
 
     findings = reconcile(root, entries, scans, pins=pins, full=full)
     findings += [
@@ -68,8 +79,18 @@ def run_check(
             wanted[(kind, package, version)].add(usage.target)
     histories: dict[tuple[ApiKind, str, str | None], ApiHistory | None] = {}
     for key, targets in wanted.items():
-        provider = providers.get(key[0])
-        histories[key] = provider.history(key[1], key[2], sorted(targets)) if provider else None
+        kind, package, version = key
+        provider = providers.get(kind)
+        if provider is None:
+            histories[key] = None
+            continue
+        history = provider.history(package, version, sorted(targets))
+        if history is None and kind == "npm":
+            # No bundled types: TypeScript falls back to DefinitelyTyped, so do we.
+            typed = types_package(package)
+            if typed in pins["npm"]:
+                history = provider.history(typed, pins["npm"][typed], sorted(targets))
+        histories[key] = history
 
     unverifiable = 0
     for kind, usage, package, version in subjects:
@@ -99,6 +120,9 @@ def _subjects(
 
     for scan in scans:
         for usage in scan.usages:
+            if scan.kind == "npm":
+                yield "npm", usage, usage.module, pins["npm"].get(usage.module)
+                continue
             package = python_dist_for(usage.target, python_pins)
             yield "python", usage, package, python_pins.get(package) if package else None
 
@@ -112,7 +136,7 @@ def _subjects(
                     continue
                 usage = Usage(
                     target=call.target,
-                    module=entry.import_root.split(".")[0],
+                    module=entry.api if entry.kind == "npm" else entry.import_root.split(".")[0],
                     file=loc.file,
                     line=loc.line_hint,
                     symbol=loc.symbol or "<module>",

@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -43,8 +44,18 @@ class Http:
             )
         return self._client
 
-    def get_json(self, url: str, cache_key: str, max_age: float) -> Any | None:
-        """JSON from `url`, cached under `cache_key`. Stale cache is used offline or on failure."""
+    def get_json(
+        self,
+        url: str,
+        cache_key: str,
+        max_age: float,
+        headers: dict[str, str] | None = None,
+        transform: Callable[[Any], Any] | None = None,
+    ) -> Any | None:
+        """JSON from `url`, cached under `cache_key`. Stale cache is used offline or on failure.
+
+        `transform` reduces the response before it is cached and returned.
+        """
         path = self.cache / cache_key
         cached = read_json(path)
         if cached is not None and (self.offline or time.time() - cached["fetched_at"] < max_age):
@@ -52,12 +63,14 @@ class Http:
         if self.offline:
             return None
         try:
-            response = self.client.get(url)
+            response = self.client.get(url, headers=headers)
             if response.status_code == 404:
                 return None
             response.raise_for_status()
             data = response.json()
-        except (httpx.HTTPError, ValueError):
+            if transform is not None:
+                data = transform(data)
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
             return cached["data"] if cached is not None else None
         write_json(path, {"fetched_at": time.time(), "data": data})
         return data

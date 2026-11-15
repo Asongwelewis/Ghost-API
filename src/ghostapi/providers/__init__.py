@@ -37,8 +37,13 @@ class StaticProvider:
 
 def default_providers(offline: bool | None = None) -> dict[ApiKind, Provider]:
     from ghostapi.fetch import Http, cache_dir, offline_by_default
+    from ghostapi.providers.npm import NpmProvider, NpmRegistry
     from ghostapi.providers.pypi import PyPIIndex, PyPIProvider
 
     offline = offline_by_default() if offline is None else offline
     cache = cache_dir()
-    return {"python": PyPIProvider(PyPIIndex(Http(cache, offline=offline)), cache)}
+    http = Http(cache, offline=offline)
+    return {
+        "python": PyPIProvider(PyPIIndex(http), cache),
+        "npm": NpmProvider(NpmRegistry(http), cache),
+    }

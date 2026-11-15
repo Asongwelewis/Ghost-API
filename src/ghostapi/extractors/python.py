@@ -4,19 +4,10 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Set
-from dataclasses import dataclass, field
 from pathlib import Path
 
+from ghostapi.extractors import FileScan
 from ghostapi.models import Usage
-
-
-@dataclass
-class FileScan:
-    file: str
-    usages: list[Usage] = field(default_factory=list)
-    defined: set[str] = field(default_factory=set)  # qualnames of functions/classes in the file
-    imported_roots: set[str] = field(default_factory=set)  # external top-level modules imported
-    error: str | None = None
 
 
 class _Visitor(ast.NodeVisitor):

@@ -6,17 +6,25 @@ import os
 import subprocess
 from pathlib import Path
 
+from ghostapi.extractors.javascript import is_source as is_js_source
+
 EXCLUDED_DIRS = {
     ".git", ".ghost", ".venv", "venv", "env", "node_modules", "__pycache__", "build", "dist",
     ".tox", ".nox", ".mypy_cache", ".pytest_cache", ".ruff_cache", "site-packages",
+    ".next", ".nuxt", ".svelte-kit", ".turbo", ".output", "coverage", "out",
 }  # fmt: skip
 
 
-def python_files(directory: Path) -> list[Path]:
+def is_checkable(path: Path | str) -> bool:
+    return str(path).endswith(".py") or is_js_source(path)
+
+
+def source_files(directory: Path) -> list[Path]:
+    """Python and JavaScript/TypeScript files Ghost can check, skipping build output."""
     found: list[Path] = []
     for current, dirs, files in os.walk(directory):
         dirs[:] = sorted(d for d in dirs if d not in EXCLUDED_DIRS and not d.endswith(".egg-info"))
-        found.extend(Path(current) / f for f in sorted(files) if f.endswith(".py"))
+        found.extend(Path(current) / f for f in sorted(files) if is_checkable(f))
     return found
 
 

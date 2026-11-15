@@ -1,6 +1,6 @@
 # Ghost API
 
-Catches hallucinated, removed, too-new and moved API calls in AI-written code, checked against the **exact versions in the project's lockfile**. Python and JS/TS first; REST/GraphQL next. Shipped as a **CLI package** (`ghostapi`), with MCP and a GitHub Action as thin add-ons.
+Catches hallucinated, removed, too-new and moved API calls in AI-written code, checked against the **exact versions in the project's lockfile**. Python (PyPI) and JS/TS (npm) work; REST/GraphQL next. Shipped as a **CLI package** (`ghostapi`), with MCP and a GitHub Action as thin add-ons.
 
 ## Why it exists (cite these, don't invent new stats)
 - ~19.7% of AI-suggested packages don't exist (slopsquatting study)
@@ -39,12 +39,17 @@ Finding fields: `rule`, `severity` (error/warning/info), `confidence` (high/medi
 ## Code layout (`src/ghostapi/`)
 - `models.py`: `Usage`, `ApiSymbol`, `Param`, `ApiHistory`, `Finding`
 - `registry.py`: `.ghost/apis/*.yaml` schema (pydantic), load/save/register/unregister
-- `resolver.py`: lockfile pins (uv.lock, poetry.lock, requirements.txt, pyproject, package-lock.json), import-name → distribution
-- `extractors/python.py`: stdlib-`ast` usage scan (imports, attribute chains, calls + kwargs, enclosing symbol)
+- `paths.py`: symbol paths. Python `openai.OpenAI.chat`; npm `<module>:<export>.<member>` (`react:useState`, `react-dom/client:createRoot`) because specifiers contain dots/slashes. Never split paths by hand.
+- `resolver.py`: lockfile pins (uv.lock, poetry.lock, requirements.txt, pyproject; package-lock.json, pnpm-lock.yaml, yarn.lock v1/berry, ambiguous multi-version entries skipped), package.json deps, import-name → distribution
+- `extractors/`: `FileScan`; `python.py` (stdlib `ast`); `javascript.py` (tree-sitter: imports, require, re-exports, member chains, calls/new + arg counts, JSX and type positions). Bare specifiers count as external only if declared in package.json/lockfile (tsconfig aliases).
+- `tsparse.py`: tree-sitter TS/TSX parsers + node helpers.
 - `fetch.py`: the only network layer (httpx + on-disk cache, atomic writes, offline mode). Cache: `GHOSTAPI_CACHE_DIR`, else `%LOCALAPPDATA%\ghostapi\Cache` / `~/.cache/ghostapi`.
 - `providers/__init__.py`: `Provider` protocol (`history(package, version, targets) -> ApiHistory | None`), `StaticProvider` for tests, `default_providers()`.
-- `providers/surface.py`: griffe-built static surface of one version (tree of nodes keyed by canonical path; aliases resolved; `dynamic` = can't see into it: module `__getattr__`, `globals()`, star-import from compiled/external code, external base classes).
-- `providers/pypi.py`: indexes only the pinned version up front. A symbol missing from it triggers history: latest release (→ `too-new`, bisect for `added_in`), up to 3 older series anchors (→ `removed-in`, try the anchor's next release, then bisect; single public same-name match → `moved_to`), else never existed. Surfaces and answers are cached per version.
+- `providers/surface.py`: language-neutral surface of one version (nodes keyed by canonical id, `roots` = importable modules; `dynamic` = can't see into it → engine stays silent).
+- `providers/pysurface.py`: griffe builder (dynamic: module `__getattr__`, `globals()`, star-import from compiled/external code, external base classes).
+- `providers/dts.py`: `.d.ts` builder (package.json `exports` conditions + wildcards, `types`, deep imports; `export =`, namespaces (members always exported), declaration merging, `declare const x: Iface` → Iface members, re-exports, ambient `declare module` of its own name; overloads → no params; dynamic: index signatures, bases/star-exports from other packages, global scripts).
+- `providers/history.py`: `VersionedProvider` base. Indexes only the pinned version; a missing symbol triggers history: latest release (→ `too-new`, bisect `added_in`), up to 3 older series anchors (→ `removed-in`, try the anchor's next release, then bisect; single public same-name match → `moved_to`), else never existed. Surfaces and answers cached per version.
+- `providers/pypi.py`, `providers/npm.py`: registry clients + builders (npm uses the abbreviated registry doc and tarball `.d.ts` only). Checker falls back to pinned `@types/x` when `x` ships no types; findings then name `@types/x` and its version.
 - `engine.py`: rules. Knows nothing about providers or extractors.
 - `reconcile.py`: registry ↔ code drift rules
 - `checker.py`: orchestrates everything into a `Report`
@@ -58,7 +63,7 @@ Adding an API type = a provider (+ an extractor if it can be scanned). Never new
 ```
 uv sync                       # install
 uv run pytest                 # tests (offline; conftest forces GHOSTAPI_OFFLINE + temp cache)
-GHOSTAPI_NETWORK_TESTS=1 uv run pytest -m network   # live PyPI test (~20s cold)
+GHOSTAPI_NETWORK_TESTS=1 uv run pytest -m network   # live PyPI + npm tests (~90s cold)
 uv run ruff check . && uv run ruff format .
 uv run pyright
 uv run ghostapi --help
@@ -72,11 +77,11 @@ uv run ghostapi --help
 - Dependabot targets `dev`. Use `uv sync --locked` in CI, so commit `uv.lock` with dependency changes.
 
 ## Stack
-Python 3.12+ · uv · typer · pydantic v2 · PyYAML · packaging · stdlib `ast` · griffe (static API loading) · httpx. Planned: `tree-sitter` (JS/TS + `.d.ts`), `mcp` SDK (`ghostapi mcp`).
+Python 3.12+ · uv · typer · pydantic v2 · PyYAML · packaging · stdlib `ast` · griffe (static Python API loading) · tree-sitter + tree-sitter-typescript (JS/TS + `.d.ts`) · httpx. MCP server is on hold (no hosting infrastructure).
 
 ## Roadmap
-- **Done**: registry + drift rules, Python scanner, lockfiles, rule engine, PyPI provider with version history, CI/CD.
-- **MVP (wk 1–4)**: npm provider with version history · F2 add pnpm/yarn locks + monorepo workspaces · F5 fix suggestions from index diffs · `ghostapi watch` · `ghostapi mcp` (`check_code`, `get_signature`, `what_changed`) · F8 eval harness / benchmark.
+- **Done**: registry + drift rules, Python + JS/TS scanners, lockfiles (pip/uv/poetry/npm/pnpm/yarn), rule engine, PyPI + npm providers with version history, CI/CD.
+- **MVP (wk 1–4)**: monorepo workspaces · F5 fix suggestions from index diffs · `ghostapi watch` · F8 eval harness / benchmark. `ghostapi mcp` on hold (no infrastructure).
 - **v1**: GitHub Action (diff-only, baseline, thresholds) · unknown-package / slopsquat pre-install gate · what-if upgrade mode · Markdown/notebook snippets · web playground · public leaderboard.
 - **v1.5**: OpenAPI/REST, GraphQL, boto3/botocore, stdlib-by-runtime-version providers.
 - **Later**: Go/Java, gRPC/proto, config files (Tailwind/Next), safe codemods, editor extension, maintainer radar.

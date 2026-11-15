@@ -10,6 +10,8 @@ from difflib import get_close_matches
 from packaging.version import InvalidVersion, Version
 
 from ghostapi.models import ApiHistory, ApiSymbol, Finding, Severity, Usage
+from ghostapi.paths import child, display, leaf, prefix, segments
+from ghostapi.paths import parent as parent_of
 
 _CONTAINERS = {"module", "class"}
 
@@ -73,13 +75,13 @@ class _Ctx:
 def check_usage(
     usage: Usage, *, package: str, version: str | None, history: ApiHistory
 ) -> list[Finding]:
-    ctx = _Ctx(usage, package, version, history)
+    # A provider may answer from a different package, e.g. `@types/lodash` for `lodash`.
+    ctx = _Ctx(usage, history.package or package, history.version or version, history)
     symbol = history.symbols.get(usage.target)
     if symbol is None:
         # `openai.ChatCompletion.create` is explained by `openai.ChatCompletion` being removed.
-        parts = usage.target.split(".")
-        for end in range(len(parts) - 1, 0, -1):
-            ancestor = history.symbols.get(".".join(parts[:end]))
+        for end in range(len(segments(usage.target)) - 1, 0, -1):
+            ancestor = history.symbols.get(prefix(usage.target, end))
             if ancestor is not None:
                 return _lifecycle(ctx, ancestor) or _unknown(ctx)
         return []
@@ -90,30 +92,30 @@ def check_usage(
 
 
 def _unknown(ctx: _Ctx) -> list[Finding]:
-    parts = ctx.usage.target.split(".")
+    parts = segments(ctx.usage.target)
     symbols = ctx.history.symbols
     # Longest prefix the index knows about; only judge the segment right after it.
     for end in range(len(parts) - 1, 0, -1):
-        parent_path = ".".join(parts[:end])
+        parent_path = prefix(ctx.usage.target, end)
         parent = symbols.get(parent_path)
         if parent is None:
             continue
         if parent.dynamic or parent.kind not in _CONTAINERS:
             return []  # attribute could be created at runtime, or lives on an instance
-        missing = f"{parent_path}.{parts[end]}"
+        missing = child(parent_path, parts[end])
         siblings = sorted(
-            p.rsplit(".", 1)[1]
+            leaf(p)
             for p, s in symbols.items()
-            if p.rpartition(".")[0] == parent_path and _exists_at(s, ctx.version)
+            if parent_of(p) == parent_path and _exists_at(s, ctx.version)
         )
         match = get_close_matches(parts[end], siblings, n=1, cutoff=0.6)
         return [
             ctx.finding(
                 "unknown-symbol",
                 Severity.ERROR,
-                f"`{missing}` does not exist in any known version of {ctx.package}.",
+                f"`{display(missing)}` does not exist in any known version of {ctx.package}.",
                 target=missing,
-                fix=f"Did you mean `{parent_path}.{match[0]}`?" if match else None,
+                fix=f"Did you mean `{display(child(parent_path, match[0]))}`?" if match else None,
             )
         ]
     return []
@@ -125,6 +127,7 @@ def _exists_at(symbol: ApiSymbol, version: str | None) -> bool:
 
 def _lifecycle(ctx: _Ctx, symbol: ApiSymbol) -> list[Finding]:
     target = symbol.path
+    shown = display(target)
     url = symbol.source_url
     if symbol.removed_in and _at_least(ctx.version, symbol.removed_in):
         if symbol.moved_to:
@@ -132,9 +135,9 @@ def _lifecycle(ctx: _Ctx, symbol: ApiSymbol) -> list[Finding]:
                 ctx.finding(
                     "import-path",
                     Severity.ERROR,
-                    f"`{target}` moved to `{symbol.moved_to}` in {ctx.package} "
+                    f"`{shown}` moved to `{display(symbol.moved_to)}` in {ctx.package} "
                     f"{symbol.removed_in}; you have {ctx.version}.",
-                    fix=f"Use `{symbol.moved_to}`.",
+                    fix=f"Use `{display(symbol.moved_to)}`.",
                     target=target,
                     source_url=url,
                 )
@@ -143,7 +146,7 @@ def _lifecycle(ctx: _Ctx, symbol: ApiSymbol) -> list[Finding]:
             ctx.finding(
                 "removed-in",
                 Severity.ERROR,
-                f"`{target}` was removed in {ctx.package} {symbol.removed_in}; "
+                f"`{shown}` was removed in {ctx.package} {symbol.removed_in}; "
                 f"you have {ctx.version}.",
                 fix=f"Use `{symbol.replacement}`." if symbol.replacement else None,
                 target=target,
@@ -158,7 +161,7 @@ def _lifecycle(ctx: _Ctx, symbol: ApiSymbol) -> list[Finding]:
             ctx.finding(
                 "too-new",
                 Severity.ERROR,
-                f"`{target}` was added in {ctx.package} {symbol.added_in}; you have {ctx.version}.",
+                f"`{shown}` was added in {ctx.package} {symbol.added_in}; you have {ctx.version}.",
                 fix=fix + ".",
                 target=target,
                 source_url=url,
@@ -170,7 +173,7 @@ def _lifecycle(ctx: _Ctx, symbol: ApiSymbol) -> list[Finding]:
             ctx.finding(
                 "deprecated",
                 Severity.WARNING,
-                f"`{target}` is deprecated in {ctx.pinned}{timeline}.",
+                f"`{shown}` is deprecated in {ctx.pinned}{timeline}.",
                 fix=f"Use `{symbol.replacement}`." if symbol.replacement else None,
                 target=target,
                 source_url=url,
@@ -197,7 +200,7 @@ def _params(ctx: _Ctx, symbol: ApiSymbol) -> list[Finding]:
                     ctx.finding(
                         "bad-parameter",
                         Severity.ERROR,
-                        f"`{usage.target}` has no parameter `{kw}` in {ctx.pinned}.",
+                        f"`{display(usage.target)}` has no parameter `{kw}` in {ctx.pinned}.",
                         fix=f"Did you mean `{match[0]}`?" if match else None,
                     )
                 )
@@ -208,8 +211,8 @@ def _params(ctx: _Ctx, symbol: ApiSymbol) -> list[Finding]:
             ctx.finding(
                 "arity",
                 Severity.ERROR,
-                f"`{usage.target}` takes at most {len(positional)} positional argument(s) in "
-                f"{ctx.pinned}; got {usage.n_positional}.",
+                f"`{display(usage.target)}` takes at most {len(positional)} positional "
+                f"argument(s) in {ctx.pinned}; got {usage.n_positional}.",
             )
         )
 
@@ -227,7 +230,7 @@ def _params(ctx: _Ctx, symbol: ApiSymbol) -> list[Finding]:
             ctx.finding(
                 "arity",
                 Severity.ERROR,
-                f"`{usage.target}` is missing required argument(s) in {ctx.pinned}: "
+                f"`{display(usage.target)}` is missing required argument(s) in {ctx.pinned}: "
                 + ", ".join(f"`{m}`" for m in missing)
                 + ".",
             )
