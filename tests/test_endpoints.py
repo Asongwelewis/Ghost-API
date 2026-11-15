@@ -231,7 +231,7 @@ def test_unknown_endpoint_and_wrong_method(tmp_path):
     findings = {f.rule: f for f in report.findings if f.api == "http"}
     assert set(findings) == {"unknown-endpoint", "wrong-method"}  # /static/... isn't our API
     assert findings["unknown-endpoint"].line == 4
-    assert findings["unknown-endpoint"].fix == "Did you mean `/api/orders` (api/main.py:5)?"
+    assert findings["unknown-endpoint"].fix == "Did you mean `/api/orders/{oid}` (api/main.py:3)?"
     assert "accepts GET, not PUT" in findings["wrong-method"].message
 
 

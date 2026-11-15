@@ -98,10 +98,8 @@ def _judge(call: HttpCall, endpoints: list[Endpoint], first_segments: set[str]) 
     if not hits:
         if not call.segments or call.segments[0] not in first_segments:
             return []  # not obviously aimed at this project's API (static file, page, ...)
-        known = sorted({e.path for e in endpoints if e.prefix_known})
-        match = get_close_matches(call.path, known, n=1, cutoff=0.6)
-        where = next((e.where() for e in endpoints if match and e.path == match[0]), "")
-        fix = f"Did you mean `{match[0]}` ({where})?" if match else None
+        suggestion = _closest(call, [e for e in endpoints if e.prefix_known])
+        fix = f"Did you mean `{suggestion.path}` ({suggestion.where()})?" if suggestion else None
         return [
             _finding(
                 "unknown-endpoint",
@@ -124,6 +122,24 @@ def _judge(call: HttpCall, endpoints: list[Endpoint], first_segments: set[str]) 
             f"Use {allowed}, or add a {call.method} handler for this path.",
         )
     ]
+
+
+def _closest(call: HttpCall, endpoints: list[Endpoint]) -> Endpoint | None:
+    """The route the call most likely meant: compared by shape, same length first."""
+    wanted = "/" + "/".join(call.segments)
+    by_shape: dict[str, Endpoint] = {}
+    for e in endpoints:  # per shape, prefer the route whose method the call uses
+        key = "/" + "/".join(shape(e))
+        if key not in by_shape or (
+            method_matches(e, call.method) and not method_matches(by_shape[key], call.method)
+        ):
+            by_shape[key] = e
+    same_length = [s for s, e in by_shape.items() if len(e.segments) == len(call.segments)]
+    for candidates in (same_length, list(by_shape)):
+        match = get_close_matches(wanted, candidates, n=1, cutoff=0.6)
+        if match:
+            return by_shape[match[0]]
+    return None
 
 
 def _first_segments(endpoints: list[Endpoint]) -> set[str]:
