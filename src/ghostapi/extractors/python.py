@@ -6,7 +6,7 @@ import ast
 from collections.abc import Set
 from pathlib import Path
 
-from ghostapi.extractors import FileScan
+from ghostapi.extractors import FileScan, quiet_parsing
 from ghostapi.models import Usage
 
 
@@ -111,7 +111,8 @@ class _Visitor(ast.NodeVisitor):
 def scan_source(source: str, file: str, skip_roots: Set[str]) -> FileScan:
     scan = FileScan(file=file)
     try:
-        tree = ast.parse(source, filename=file)
+        with quiet_parsing():
+            tree = ast.parse(source, filename=file)
     except SyntaxError as exc:
         scan.error = f"line {exc.lineno}: {exc.msg}"
         return scan

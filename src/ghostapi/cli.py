@@ -12,10 +12,11 @@ from typing import Annotated, cast
 import typer
 
 from ghostapi import __version__, bootstrap, hooks, registry
+from ghostapi import baseline as baselines
 from ghostapi.checker import Report, run_check
 from ghostapi.models import ApiKind, Severity
-from ghostapi.output import RENDERERS
-from ghostapi.project import changed_files, rel, source_files, staged_files
+from ghostapi.output import RENDERERS, to_sarif
+from ghostapi.project import changed_files, diff_files, rel, source_files, staged_files
 from ghostapi.registry import Location, RegistryError
 from ghostapi.resolver import normalize, resolve_versions
 
@@ -39,6 +40,7 @@ class Format(StrEnum):
     text = "text"
     json = "json"
     sarif = "sarif"
+    github = "github"
 
 
 class FailOn(StrEnum):
@@ -195,6 +197,15 @@ def check(
     changed: Annotated[
         bool, typer.Option(help="Only files git sees as modified or new (any agent, any editor).")
     ] = False,
+    diff_base: Annotated[
+        str | None, typer.Option(help="Only files changed since this git ref (pull requests).")
+    ] = None,
+    baseline: Annotated[
+        Path | None, typer.Option(help="Hide findings this baseline file already accepts.")
+    ] = None,
+    sarif_out: Annotated[
+        Path | None, typer.Option(help="Also write SARIF to this file (code scanning).")
+    ] = None,
     hook: Annotated[
         bool, typer.Option(help="Deprecated alias for `ghostapi hook claude`.", hidden=True)
     ] = False,
@@ -207,14 +218,20 @@ def check(
     if hook:
         _emit(hooks.run("claude", sys.stdin.read()))
         return
+    if sum(map(bool, (staged, changed, diff_base, paths))) > 1:
+        raise _fail("use only one of PATHS, --staged, --changed and --diff-base")
 
     files: list[Path] | None = None
-    if staged or changed:
-        try:
-            files = staged_files(root) if staged else changed_files(root)
-        except (OSError, subprocess.CalledProcessError) as exc:
-            raise _fail(f"could not list files from git: {exc}") from exc
-    elif paths:
+    try:
+        if staged:
+            files = staged_files(root)
+        elif changed:
+            files = changed_files(root)
+        elif diff_base:
+            files = diff_files(root, diff_base)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise _fail(f"could not list files from git: {exc}") from exc
+    if paths:
         files = []
         for path in paths:
             resolved = path if path.is_absolute() else root / path
@@ -222,11 +239,32 @@ def check(
 
     try:
         report = run_check(root, files=files, offline=offline)
-    except RegistryError as exc:
+        if baseline is not None:
+            accepted = baselines.load(baseline if baseline.is_absolute() else root / baseline)
+            report.findings, report.baselined = baselines.apply(report.findings, accepted)
+    except (RegistryError, baselines.BaselineError) as exc:
         raise _fail(str(exc)) from exc
+    if sarif_out is not None:
+        sarif_out.write_text(to_sarif(report), encoding="utf-8")
     typer.echo(RENDERERS[format.value](report))
     if _fails(report, fail_on):
         raise typer.Exit(1)
+
+
+@app.command(name="baseline")
+def write_baseline(
+    root: RootOption = Path("."),
+    output: Annotated[Path, typer.Option(help="Baseline file.")] = baselines.DEFAULT_PATH,
+    offline: Annotated[bool | None, typer.Option("--offline/--online")] = None,
+) -> None:
+    """Accept every current finding, so `check --baseline` only reports new ones."""
+    try:
+        report = run_check(root, offline=offline)
+    except RegistryError as exc:
+        raise _fail(str(exc)) from exc
+    path = output if output.is_absolute() else root / output
+    count = baselines.write(path, report.findings)
+    typer.echo(f"accepted {count} finding(s) in {rel(root, path) or path}")
 
 
 def main() -> None:

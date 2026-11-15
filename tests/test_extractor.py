@@ -52,3 +52,12 @@ def test_syntax_error_is_reported_not_raised():
     scan = scan_source("def broken(:\n", "x.py", SKIP)
     assert scan.error is not None
     assert scan.usages == []
+
+
+def test_invalid_escapes_in_scanned_code_print_no_warnings():
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        scan_source("x = '\*'\n", "x.py", SKIP)
+    assert caught == []

@@ -50,28 +50,28 @@ def local_modules(root: Path) -> set[str]:
     return names
 
 
+def _git(root: Path, *args: str) -> str:
+    result = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, result.args, stderr=result.stderr)
+    return result.stdout
+
+
+def _from_toplevel(root: Path, names: list[str]) -> list[Path]:
+    """git prints paths relative to the repository root, which may be above `root`."""
+    top = Path(_git(root, "rev-parse", "--show-toplevel").strip())
+    return [top / name for name in names if name]
+
+
 def staged_files(root: Path) -> list[Path]:
-    result = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return [root / name for name in result.stdout.split("\0") if name]
+    out = _git(root, "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
+    return _from_toplevel(root, out.split("\0"))
 
 
 def changed_files(root: Path) -> list[Path]:
     """Files git sees as modified, added or untracked; for agents with no edit hook."""
-    result = subprocess.run(
-        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    entries = result.stdout.split("\0")
-    files: list[Path] = []
+    entries = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all").split("\0")
+    names: list[str] = []
     i = 0
     while i < len(entries):
         entry = entries[i]
@@ -82,5 +82,15 @@ def changed_files(root: Path) -> list[Path]:
         if status[0] in "RC":
             i += 1  # renames are followed by the old path
         if "D" not in status:
-            files.append(root / name)
-    return files
+            names.append(name)
+    return _from_toplevel(root, names)
+
+
+def diff_files(root: Path, base: str) -> list[Path]:
+    """Files added or modified since `base` (via the merge base, when git can find one)."""
+    try:
+        start = _git(root, "merge-base", base, "HEAD").strip()
+    except subprocess.CalledProcessError:
+        start = base  # shallow CI checkouts lack the history; diffing the trees still works
+    out = _git(root, "diff", "--name-only", "--diff-filter=ACMR", "-z", start, "HEAD")
+    return _from_toplevel(root, out.split("\0"))

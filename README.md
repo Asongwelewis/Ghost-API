@@ -50,6 +50,31 @@ src/App.tsx:17:9 error arity [high] `axios:default.get` takes at most 2 position
 Lockfiles: `uv.lock`, `poetry.lock`, `requirements.txt`, `pyproject.toml`, `package-lock.json`,
 `pnpm-lock.yaml`, `yarn.lock`.
 
+## In CI (GitHub Action)
+
+```yaml
+# .github/workflows/ghostapi.yml
+name: Ghost API
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Asongwelewis/Ghost-API@main   # pin a release tag once one exists
+        with:
+          fail-on: error        # or: warning, never
+          # diff-only: "true"   # default: only files the pull request changes
+          # upload-sarif: "true"  # also send results to code scanning (needs security-events: write)
+```
+
+Findings show up as annotations on the pull request's changed lines. In a project that already
+has findings, run `ghostapi baseline` once and commit `.ghost/baseline.json`: the Action (and
+`ghostapi check --baseline .ghost/baseline.json`) then fails only on new problems. Package
+indexes are cached between runs, keyed on your lockfiles.
+
 > Status: early. Python (PyPI) and JavaScript/TypeScript (npm) are checked; REST and GraphQL
 > providers are next. Anything Ghost can't verify is reported as "unverifiable", never as an error.
 

@@ -15,6 +15,7 @@ from typing import Any
 
 import griffe
 
+from ghostapi.extractors import quiet_parsing
 from ghostapi.models import Param, ParamKind
 from ghostapi.providers.surface import EXTERNAL, Node, Surface
 
@@ -42,20 +43,21 @@ def build_surface(
     known = _module_names(source_dir) | set(compiled)
     roots: dict[str, str] = {}
     nodes: dict[str, Node] = {}
-    for name in sorted(top_modules):
-        try:
-            module = griffe.load(
-                name,
-                search_paths=[source_dir],
-                allow_inspection=False,
-                resolve_aliases=True,
-                resolve_external=False,
-                store_source=False,
-            )
-        except Exception:  # griffe raises many error types on unusual layouts; skip the module
-            continue
-        roots[name] = module.path
-        _collect(module, nodes, known)
+    with quiet_parsing():
+        for name in sorted(top_modules):
+            try:
+                module = griffe.load(
+                    name,
+                    search_paths=[source_dir],
+                    allow_inspection=False,
+                    resolve_aliases=True,
+                    resolve_external=False,
+                    store_source=False,
+                )
+            except Exception:  # griffe raises many error types on odd layouts; skip the module
+                continue
+            roots[name] = module.path
+            _collect(module, nodes, known)
     for dotted in compiled:
         _add_compiled(dotted, roots, nodes)
     return Surface(roots, nodes)

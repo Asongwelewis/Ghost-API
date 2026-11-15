@@ -59,7 +59,8 @@ Finding fields: `rule`, `severity` (error/warning/info), `confidence` (high/medi
 - `engine.py`: rules. Knows nothing about providers or extractors.
 - `reconcile.py`: registry ↔ code drift rules
 - `checker.py`: orchestrates everything into a `Report`
-- `output.py`: text / JSON / SARIF 2.1.0
+- `output.py`: text / JSON / SARIF 2.1.0 / GitHub annotations (`--format github`)
+- `baseline.py`: accepted findings keyed by rule+file+target (line-independent, count-aware); `ghostapi baseline`, `check --baseline`
 - `bootstrap.py`: `init` (agent instructions + hooks, idempotent, merges into existing JSON configs, refuses to overwrite invalid ones)
 - `hooks.py`: per-agent hook adapters (payload → files → check → that agent's feedback channel)
 - `cli.py`: typer adapter only, no logic
@@ -81,15 +82,16 @@ uv run ghostapi --help
 - `.github/workflows/ci.yml` (push/PR to main+dev, weekly): lint + format + pyright; pytest on Linux/Windows/macOS × py3.12–3.14; non-blocking live PyPI test; build + wheel smoke test; `CI passed` gate job (the only check branch rules require).
 - Published to PyPI as `ghostapi0`: `ghost-api` belongs to someone else, and PyPI treats `ghostapi` as the same name. The command stays `ghostapi`.
 - `.github/workflows/release.yml` (tag `v*`): verify tag/version/main, test, build, publish to PyPI via trusted publishing (environment `pypi`), GitHub release.
+- `action.yml` (repo root, composite): installs ghostapi from the action's own checkout (or `version:` from PyPI), caches indexes keyed on lockfiles, runs `check --format github --sarif-out` with `--diff-base FETCH_HEAD` on PRs and `.ghost/baseline.json` when present, optional SARIF upload; inputs go through env vars, never inline `${{ }}` in scripts. Self-tested by the `action` job against `.github/action-test/`.
 - Dependabot targets `dev`. Use `uv sync --locked` in CI, so commit `uv.lock` with dependency changes.
 
 ## Stack
 Python 3.12+ · uv · typer · pydantic v2 · PyYAML · packaging · stdlib `ast` · griffe (static Python API loading) · tree-sitter + tree-sitter-typescript (JS/TS + `.d.ts`) · httpx. MCP server is on hold (no hosting infrastructure).
 
 ## Roadmap
-- **Done**: registry + drift rules, Python + JS/TS scanners, lockfiles (pip/uv/poetry/npm/pnpm/yarn), rule engine, PyPI + npm providers with version history, CI/CD.
+- **Done**: registry + drift rules, Python + JS/TS scanners, lockfiles (pip/uv/poetry/npm/pnpm/yarn), rule engine, PyPI + npm providers with version history, Claude/Codex/Cursor hooks, GitHub Action (diff-only, baseline, thresholds, SARIF), CI/CD.
 - **MVP (wk 1–4)**: monorepo workspaces · F5 fix suggestions from index diffs · `ghostapi watch` · F8 eval harness / benchmark. `ghostapi mcp` on hold (no infrastructure).
-- **v1**: GitHub Action (diff-only, baseline, thresholds) · unknown-package / slopsquat pre-install gate · what-if upgrade mode · Markdown/notebook snippets · web playground · public leaderboard.
+- **v1**: unknown-package / slopsquat pre-install gate · what-if upgrade mode · Markdown/notebook snippets · web playground · public leaderboard.
 - **v1.5**: OpenAPI/REST, GraphQL, boto3/botocore, stdlib-by-runtime-version providers.
 - **Later**: Go/Java, gRPC/proto, config files (Tailwind/Next), safe codemods, editor extension, maintainer radar.
 

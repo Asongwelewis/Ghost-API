@@ -83,10 +83,29 @@ jobs:
           path: dist/
 
   # The one check to require in branch protection, so matrix changes never need a settings update.
+  action:
+    name: Action self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - id: ghost
+        uses: ./
+        with:
+          path: .github/action-test
+          fail-on: never
+      - name: Verify the action's outputs
+        env:
+          SARIF: ${{ steps.ghost.outputs.sarif-file }}
+          CODE: ${{ steps.ghost.outputs.exit-code }}
+        run: |
+          test "$CODE" = "0"
+          grep -q unregistered-api-call "$SARIF"  # needs no network
+          grep -q unknown-symbol "$SARIF" || echo "::warning::unknown-symbol missing; PyPI unreachable?"
+
   ci-passed:
     name: CI passed
     if: always()
-    needs: [lint, test, build]
+    needs: [lint, test, build, action]
     runs-on: ubuntu-latest
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')

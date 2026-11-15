@@ -1,0 +1,102 @@
+name: Ghost API check
+description: Catch hallucinated, removed and too-new API calls, checked against the exact versions in your lockfile.
+author: Asongwe Lewis Fon
+branding:
+  icon: alert-triangle
+  color: purple
+
+inputs:
+  path:
+    description: "Project root to check, relative to the repository."
+    default: "."
+  fail-on:
+    description: "Fail the job at this severity: error, warning or never."
+    default: error
+  diff-only:
+    description: "On pull requests, check only the files the pull request changes."
+    default: "true"
+  baseline:
+    description: "Baseline file (from `ghostapi baseline`); only new findings fail. Default .ghost/baseline.json when it exists."
+    default: ""
+  upload-sarif:
+    description: "Upload results to GitHub code scanning (needs `security-events: write`)."
+    default: "false"
+  version:
+    description: "ghostapi0 version from PyPI. Empty means the version of this action."
+    default: ""
+
+outputs:
+  sarif-file:
+    description: "Path of the SARIF results file."
+    value: ${{ steps.check.outputs.sarif }}
+  exit-code:
+    description: "0 when the check passed, 1 when it found problems at `fail-on` severity."
+    value: ${{ steps.check.outputs.code }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v6
+
+    - name: Restore package indexes
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/ghostapi-cache
+        key: ghostapi-${{ runner.os }}-${{ hashFiles('**/uv.lock', '**/poetry.lock', '**/requirements*.txt', '**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
+        restore-keys: ghostapi-${{ runner.os }}-
+
+    - name: Install ghostapi
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        if [ -n "$VERSION" ]; then
+          uv tool install "ghostapi0==$VERSION"
+        else
+          uv tool install "$GITHUB_ACTION_PATH"
+        fi
+
+    - name: Check
+      id: check
+      shell: bash
+      env:
+        GHOSTAPI_CACHE_DIR: ${{ runner.temp }}/ghostapi-cache
+        INPUT_PATH: ${{ inputs.path }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        DIFF_ONLY: ${{ inputs.diff-only }}
+        BASELINE: ${{ inputs.baseline }}
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        sarif="$RUNNER_TEMP/ghostapi.sarif"
+        args=(--root "$INPUT_PATH" --fail-on "$FAIL_ON" --format github --sarif-out "$sarif")
+        if [ "$DIFF_ONLY" = "true" ] && [ -n "$BASE_REF" ]; then
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          args+=(--diff-base FETCH_HEAD)
+        fi
+        if [ -z "$BASELINE" ] && [ -f "$INPUT_PATH/.ghost/baseline.json" ]; then
+          BASELINE=".ghost/baseline.json"
+        fi
+        if [ -n "$BASELINE" ]; then
+          args+=(--baseline "$BASELINE")
+        fi
+        code=0
+        ghostapi check "${args[@]}" || code=$?
+        echo "sarif=$sarif" >> "$GITHUB_OUTPUT"
+        echo "code=$code" >> "$GITHUB_OUTPUT"
+        if [ "$code" -gt 1 ]; then
+          exit "$code"  # usage or setup error, not findings
+        fi
+
+    - name: Upload to code scanning
+      if: inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.check.outputs.sarif }}
+        category: ghostapi
+
+    - name: Fail on findings
+      if: steps.check.outputs.code == '1'
+      shell: bash
+      run: |
+        echo "Ghost API found problems; see the annotations above." >&2
+        exit 1

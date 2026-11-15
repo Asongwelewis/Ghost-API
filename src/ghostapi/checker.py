@@ -25,6 +25,7 @@ class Report:
     findings: list[Finding]
     unverifiable: int  # usages with no source of truth to check against (yet)
     files_scanned: int
+    baselined: int = 0  # findings hidden because the baseline already accepts them
 
 
 def run_check(
