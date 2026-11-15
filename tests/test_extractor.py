@@ -59,5 +59,5 @@ def test_invalid_escapes_in_scanned_code_print_no_warnings():
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        scan_source("x = '\*'\n", "x.py", SKIP)
+        scan_source(r"x = '\*'", "x.py", SKIP)  # the scanned code contains a bad escape
     assert caught == []
