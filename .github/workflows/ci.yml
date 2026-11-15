@@ -21,8 +21,10 @@ jobs:
     name: Lint & types
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           enable-cache: true
       - run: uv sync --locked
@@ -39,8 +41,10 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ["3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           enable-cache: true
           python-version: ${{ matrix.python }}
@@ -53,8 +57,10 @@ jobs:
     # Depends on pypi.org, so it reports but never blocks a merge.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           enable-cache: true
       - run: uv sync --locked
@@ -67,8 +73,10 @@ jobs:
     needs: [lint, test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - run: uv build
       - name: Install the wheel in a clean environment and run it
         run: |
@@ -77,17 +85,18 @@ jobs:
           printf 'import requests\nrequests.get("https://example.com")\n' > app.py
           uvx --from ../dist/*.whl ghostapi init --agent agents-md
           uvx --from ../dist/*.whl ghostapi check --offline --format json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist
           path: dist/
 
-  # The one check to require in branch protection, so matrix changes never need a settings update.
   action:
     name: Action self-test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
       - id: ghost
         uses: ./
         with:
@@ -102,6 +111,7 @@ jobs:
           grep -q unregistered-api-call "$SARIF"  # needs no network
           grep -q unknown-symbol "$SARIF" || echo "::warning::unknown-symbol missing; PyPI unreachable?"
 
+  # The one check to require in branch protection, so matrix changes never need a settings update.
   ci-passed:
     name: CI passed
     if: always()

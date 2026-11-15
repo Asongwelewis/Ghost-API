@@ -1,0 +1,36 @@
+name: Bug report
+description: Ghost crashed, misbehaved, or missed a real problem.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: A minimal project or snippet, with the lockfile entries that matter.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Ghost's output, or the traceback.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: ghostapi --version
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS, Python version, agent
+      placeholder: "macOS 15, Python 3.13, Claude Code"

@@ -1,0 +1,22 @@
+name: Feature request
+description: A framework, package registry, agent or rule Ghost should support.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What goes wrong today, ideally with a real example of AI-written code.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What Ghost should do
+    validations:
+      required: true
+  - type: textarea
+    id: docs
+    attributes:
+      label: References
+      description: Official docs for the framework, registry or hook API, if relevant.

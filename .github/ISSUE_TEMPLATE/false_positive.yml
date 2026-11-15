@@ -1,0 +1,45 @@
+name: False positive
+description: Ghost flagged code that is correct.
+title: "False positive: "
+labels: [false-positive]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Wrong findings are the most important bugs to fix, because they cost trust.
+  - type: input
+    id: rule
+    attributes:
+      label: Rule
+      description: The rule id from the finding.
+      placeholder: unknown-symbol
+    validations:
+      required: true
+  - type: textarea
+    id: finding
+    attributes:
+      label: The finding
+      description: Paste the line Ghost printed, including the `fix:` line if there was one.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: Minimal code that triggers it
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: package
+    attributes:
+      label: Package and version, or framework
+      placeholder: "openai 1.40.0 / FastAPI / Next.js 15"
+    validations:
+      required: true
+  - type: input
+    id: ghost-version
+    attributes:
+      label: ghostapi --version
+    validations:
+      required: true

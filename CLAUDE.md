@@ -45,6 +45,11 @@ Agents record what they use and provide in `.ghost/` via the CLI, never by hand:
 
 Finding fields: `rule`, `severity` (error/warning/info), `confidence` (high/medium/low/unverifiable), `file`, `line`, `col`, `api`, `version`, `target`, `message`, `fix`, `source_url`.
 
+## Repository layout
+- `src/ghostapi/` code (below) · `tests/` (offline; `test_*` per module) · `docs/` user docs (getting-started, how-it-works, rules, cli, agents, multi-agent, configuration, ci, supported): **update them with any behaviour change**, plus CHANGELOG `[Unreleased]`
+- `examples/fullstack/` FastAPI + Next.js demo with deliberate mistakes; its README shows real output, so re-run it when messages change · `.github/action-test/` fixture for the Action self-test
+- Community files: README, CONTRIBUTING, CODE_OF_CONDUCT (Contributor Covenant 3.0 by reference), SECURITY (GitHub private advisories), SUPPORT, CHANGELOG (Keep a Changelog), `.github/ISSUE_TEMPLATE/` (bug, false-positive, feature), PR template, CODEOWNERS, `release.yml` (release-note categories by label)
+
 ## Code layout (`src/ghostapi/`)
 - `models.py`: `Usage`, `ApiSymbol`, `Param`, `ApiHistory`, `Finding`
 - `registry.py`: `.ghost/` schema (pydantic), register/unregister, provide/unprovide, legacy migration; `fsutil.py`: lock + atomic write
@@ -90,6 +95,7 @@ Git Bash on Windows rewrites arguments starting with `/`: pass endpoint paths as
 - Published to PyPI as `ghostapi0`: `ghost-api` belongs to someone else, and PyPI treats `ghostapi` as the same name. The command stays `ghostapi`.
 - `.github/workflows/release.yml` (tag `v*`): verify tag/version/main, test, build, publish to PyPI via trusted publishing (environment `pypi`), GitHub release.
 - `action.yml` (repo root, composite): installs ghostapi from the action's own checkout (or `version:` from PyPI), caches indexes keyed on lockfiles, runs `check --format github --sarif-out` with `--diff-base FETCH_HEAD` on PRs and `.ghost/baseline.json` when present, optional SARIF upload; inputs go through env vars, never inline `${{ }}` in scripts. Self-tested by the `action` job against `.github/action-test/`.
+- `codeql.yml` (Python + Actions SAST) and `scorecard.yml` (OpenSSF Scorecard; runs on `main`). Every third-party action is pinned to a full commit SHA with a `# vX.Y.Z` comment (Dependabot bumps them); checkouts use `persist-credentials: false`; workflows default to `contents: read`.
 - Dependabot targets `dev`. Use `uv sync --locked` in CI, so commit `uv.lock` with dependency changes.
 
 ## Stack

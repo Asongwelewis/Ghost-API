@@ -5,7 +5,27 @@ description = "Catches hallucinated, removed and too-new API calls in AI-written
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "Asongwe Lewis Fon" }]
+maintainers = [{ name = "Asongwe Lewis Fon" }]
 requires-python = ">=3.12"
+keywords = [
+    "ai", "llm", "coding-agents", "hallucination", "static-analysis", "api",
+    "linter", "claude-code", "codex", "cursor", "openapi", "lockfile",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: JavaScript",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
 dependencies = [
     "griffe>=2.4.1",
     "httpx>=0.28.1",
@@ -19,6 +39,13 @@ dependencies = [
 
 [project.scripts]
 ghostapi = "ghostapi.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Asongwelewis/Ghost-API"
+Documentation = "https://github.com/Asongwelewis/Ghost-API/tree/dev/docs"
+Issues = "https://github.com/Asongwelewis/Ghost-API/issues"
+Changelog = "https://github.com/Asongwelewis/Ghost-API/blob/dev/CHANGELOG.md"
+Source = "https://github.com/Asongwelewis/Ghost-API"
 
 [build-system]
 requires = ["hatchling"]
